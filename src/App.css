@@ -40,3 +40,13 @@
 .read-the-docs {
   color: #888;
 }
+.bat {
+  width: 300px;
+  height: 300px;
+  border-radius: 50%;
+  background-image: url("/bat.jpg?v=12345");
+  background-size: cover;
+  background-position: center;
+  border: 3px solid rgba(255, 255, 255, 0.1);
+}
+

@@ -1,8 +1,14 @@
-import React, { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
+import ReactDOM from "react-dom";
+import "./index.css";
+
+
+
+
 
 /* -------------------------
-   Provably-fair helpers (unchanged logic)
+   Provably-fair helpers (kept)
    ------------------------- */
 async function sha256Hex(message: string) {
   const encoder = new TextEncoder();
@@ -25,10 +31,9 @@ async function deriveDiceFromSeeds(serverSeed: string, clientSeed: string, nonce
 }
 
 /* -------------------------
-   Dice SVG (clean, crisp)
-   We'll animate the wrapper for "3D-ish" effect
+   Dice SVG
    ------------------------- */
-function DiceSVG({ value, size = 92 }: { value: number; size?: number }) {
+function DiceSVG({ value, size = 84 }: { value: number; size?: number }) {
   const dots: Record<number, number[][]> = {
     1: [[1, 1]],
     2: [[0, 0], [2, 2]],
@@ -39,383 +44,565 @@ function DiceSVG({ value, size = 92 }: { value: number; size?: number }) {
   };
 
   return (
-    <svg width={size} height={size} viewBox="0 0 100 100" className="rounded-2xl">
-      <defs>
-        <linearGradient id="dgrad" x1="0" x2="1">
-          <stop offset="0%" stopColor="#fff" stopOpacity="0.98" />
-          <stop offset="100%" stopColor="#f3f4f6" stopOpacity="0.9" />
-        </linearGradient>
-      </defs>
-      <rect x="0" y="0" width="100" height="100" rx="14" fill="url(#dgrad)" stroke="#bcbcbc" />
+    <svg width={size} height={size} viewBox="0 0 100 100" className="rounded-lg drop-shadow-2xl">
+      {/* Nền xúc xắc đậm hơn */}
+      <rect x="0" y="0" width="100" height="100" rx="14" fill="#181E39" stroke="#202531" />
+      {/* Chấm vàng đậm nổi bật */}
       {dots[value].map(([r, c], i) => (
-        <circle key={i} cx={(c + 0.9) * 25} cy={(r + 0.9) * 25} r="7.5" fill="#0b1220" />
+        <circle key={i} cx={(c + 0.9) * 25} cy={(r + 0.9) * 25} r="7.5" fill="#f9d852" />
       ))}
     </svg>
   );
 }
 
 /* -------------------------
-   WebAudio "shake" sound generator
-   Simple multi-burst oscillator + noise to simulate dice shake
+   Helper formatting
    ------------------------- */
-function playShakeSound() {
-  try {
-    const ctx = new (window.AudioContext || (window as any).webkitAudioContext)();
-    const master = ctx.createGain();
-    master.gain.value = 0.18;
-    master.connect(ctx.destination);
+const fmt = (n: number) => n.toLocaleString();
 
-    // create a short white-noise burst function
-    const playNoiseBurst = (time: number, dur = 0.08, gain = 0.06) => {
-      const bufferSize = ctx.sampleRate * dur;
-      const buffer = ctx.createBuffer(1, bufferSize, ctx.sampleRate);
-      const data = buffer.getChannelData(0);
-      for (let i = 0; i < bufferSize; i++) data[i] = (Math.random() * 2 - 1) * 0.8;
-      const src = ctx.createBufferSource();
-      src.buffer = buffer;
-      const g = ctx.createGain();
-      g.gain.value = gain;
-      src.connect(g).connect(master);
-      src.start(time);
-    };
-
-    // create oscillator "clack" bursts
-    const playOscBurst = (time: number, freq = 900, dur = 0.06, gain = 0.1) => {
-      const o = ctx.createOscillator();
-      const g = ctx.createGain();
-      o.type = "triangle";
-      o.frequency.value = freq;
-      g.gain.value = 0;
-      o.connect(g).connect(master);
-      o.start(time);
-      g.gain.linearRampToValueAtTime(gain, time + 0.01);
-      g.gain.linearRampToValueAtTime(0.0001, time + dur);
-      o.stop(time + dur + 0.02);
-    };
-
-    const now = ctx.currentTime + 0.02;
-    // schedule multiple small bursts to simulate shake
-    for (let i = 0; i < 7; i++) {
-      const t = now + i * 0.06 + Math.random() * 0.03;
-      playNoiseBurst(t, 0.06, 0.04 + Math.random() * 0.03);
-      playOscBurst(t + 0.01, 700 + Math.random() * 900, 0.06, 0.06 + Math.random() * 0.06);
-    }
-
-    // small "clack" at end
-    playOscBurst(now + 0.45, 1200, 0.12, 0.14);
-  } catch (e) {
-    // ignore if audio not allowed
-    // console.warn("Audio failed", e);
-  }
+/* -------------------------
+   Settings Modal Component (NEW)
+   ------------------------- */
+function SettingsModal({
+  show,
+  settingPw,
+  setSettingPw,
+  tryUnlockSettings,
+  settingUnlocked,
+  setSettingUnlocked,
+  setShowSettings,
+  depositValue,
+  setDepositValue,
+  doDeposit,
+  doReset,
+}: {
+  show: boolean;
+  settingPw: string;
+  setSettingPw: (v: string) => void;
+  tryUnlockSettings: () => void;
+  settingUnlocked: boolean;
+  setSettingUnlocked: (v: boolean) => void;
+  setShowSettings: (v: boolean) => void;
+  depositValue: number;
+  setDepositValue: (v: number) => void;
+  doDeposit: () => void;
+  doReset: () => void;
+}) {
+  if (!show) return null;
+  return ReactDOM.createPortal(
+    <motion.div
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+      className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/50"
+    >
+      <motion.div
+        initial={{ y: -20 }}
+        animate={{ y: 0 }}
+        exit={{ y: 20 }}
+        className="w-[520px] bg-[#041720] border border-[rgba(255,255,255,0.04)] rounded-2xl p-6"
+      >
+        {!settingUnlocked ? (
+          <div className="flex flex-col gap-3">
+            <div className="text-sm text-slate-300">Nhập mật khẩu để vào Setting</div>
+            <input
+              type="password"
+              value={settingPw}
+              onChange={(e) => setSettingPw(e.target.value)}
+              className="px-3 py-2 rounded-md bg-[rgba(255,255,255,0.02)] border"
+            />
+            <div className="flex gap-2 mt-2">
+              <button onClick={tryUnlockSettings} className="px-4 py-2 rounded-lg bg-amber-400 text-black">Mở</button>
+              <button onClick={() => setShowSettings(false)} className="px-4 py-2 rounded-lg border">Hủy</button>
+            </div>
+          </div>
+        ) : (
+          <div className="flex flex-col gap-3">
+            <div className="text-sm text-slate-200">Setting (đã unlock)</div>
+            <div className="flex gap-2 items-center">
+              <input
+                type="number"
+                value={depositValue}
+                onChange={(e) => setDepositValue(Number(e.target.value))}
+                className="px-3 py-2 rounded-md bg-[rgba(255,255,255,0.02)] border"
+                placeholder="Số tiền nạp"
+              />
+              <button onClick={doDeposit} className="px-3 py-2 rounded-md bg-emerald-400 text-black">Nạp</button>
+            </div>
+            <div className="flex gap-2">
+              <button onClick={doReset} className="px-3 py-2 rounded-md bg-rose-500 text-black">Reset</button>
+              <button onClick={() => { setSettingUnlocked(false); setShowSettings(false); setSettingPw(""); }} className="px-3 py-2 rounded-md border">Đóng</button>
+            </div>
+          </div>
+        )}
+      </motion.div>
+    </motion.div>,
+    document.body
+  );
 }
 
 /* -------------------------
-   Main App: Casino-style UI (keeps all logic)
+   App.tsx
    ------------------------- */
-export default function App(): JSX.Element {
-  // Game logic state
-  const [balance, setBalance] = useState<number>(1000);
-  const [betAmount, setBetAmount] = useState<number>(50);
-  const [choice, setChoice] = useState<"tai" | "xiu">("tai");
-  const [history, setHistory] = useState<any[]>([]);
-  const [rolling, setRolling] = useState(false);
+export default function App() {
 
-  // seeds & fairness
-  const [serverSeed, setServerSeed] = useState<string>(() => Math.random().toString(36).slice(2));
-  const [serverSeedHash, setServerSeedHash] = useState<string>("");
-  const [clientSeed, setClientSeed] = useState<string>(() => "guest" + Math.floor(Math.random() * 1000));
-  const [nonce, setNonce] = useState<number>(0);
+//   function processResult() {
+//   const sum = lastDice.reduce((a, b) => a + b, 0);
+//   const res: "tai" | "xiu" = sum >= 11 && sum <= 17 ? "tai" : "xiu";
+//   const win = choice === res;
+//   const delta = win ? Math.round(betAmount * payoutMultiplier) : -betAmount;
+//   setBalance((prev) => prev + delta);
+//   setHistory((h) => [
+//     { dice: lastDice, sum, result: res, win, bet: betAmount, time: new Date().toISOString() },
+//     ...h.slice(0, 19),
+//   ]);
+//   setServerSeed(Math.random().toString(36).slice(2));
+// }
+  // ---- game state ----
+  const [balance, setBalance] = useState<number>(() => {
+    const raw = localStorage.getItem("tx_balance_v1");
+    return raw ? Number(raw) : 0; // default 0
+  });
+  const [betAmount, setBetAmount] = useState<number>(100);
+  const [choice, setChoice] = useState<"tai" | "xiu" | null>(null);
 
-  // last roll
+  // provably-fair seeds
+  const [serverSeed, setServerSeed] = useState<string>(() => {
+    const s = localStorage.getItem("tx_serverSeed_v1");
+    return s || Math.random().toString(36).slice(2);
+  });
+  // const [serverSeedHash, setServerSeedHash] = useState<string>("");
+  const [clientSeed, setClientSeed] = useState<string>(() => {
+    const s = localStorage.getItem("tx_clientSeed_v1");
+    return s || "guest" + Math.floor(Math.random() * 100000);
+  });
+  const [nonce, setNonce] = useState<number>(() => {
+    const raw = localStorage.getItem("tx_nonce_v1");
+    return raw ? Number(raw) : 0;
+  });
+
+  // roll / visible state
   const [lastDice, setLastDice] = useState<number[]>([1, 1, 1]);
-  const [lastResult, setLastResult] = useState<any>(null);
   const [lastHashBase, setLastHashBase] = useState<string>("");
+  const [rolling, setRolling] = useState<boolean>(false);
+  const [bowlOpen, setBowlOpen] = useState<boolean>(false); // if bowl is open (revealed)
+  const [waitingToOpen, setWaitingToOpen] = useState<boolean>(false); // bowl is covering, waiting for player to open
 
-  useEffect(() => {
-    (async () => {
-      const h = await sha256Hex(serverSeed);
-      setServerSeedHash(h);
-    })();
-  }, [serverSeed]);
+  // history (safe version)
+const [history, setHistory] = useState<
+  { dice: number[]; sum: number; result: "tai" | "xiu"; win: boolean; bet: number; time: string }[]
+>(() => {
+  const raw = localStorage.getItem("tx_history_v1");
+  try {
+    return raw ? JSON.parse(raw) : [];
+  } catch {
+    return [];
+  }
+});
 
+
+  // settings modal
+  const [showSettings, setShowSettings] = useState(false);
+  const [settingPw, setSettingPw] = useState("");
+  const [settingUnlocked, setSettingUnlocked] = useState(false);
+  const [depositValue, setDepositValue] = useState<number>(0);
+
+  // compute server seed hash
+  // useEffect(() => {
+  //   (async () => {
+  //     const h = await sha256Hex(serverSeed);
+  //     setServerSeedHash(h);
+  //     localStorage.setItem("tx_serverSeed_v1", serverSeed);
+  //   })();
+  // }, [serverSeed]);
+
+  // persist clientSeed, nonce, balance, history
   useEffect(() => {
-    const saved = localStorage.getItem("tx_history_v1");
-    if (saved) setHistory(JSON.parse(saved));
-  }, []);
+    localStorage.setItem("tx_clientSeed_v1", clientSeed);
+  }, [clientSeed]);
+  useEffect(() => {
+    localStorage.setItem("tx_nonce_v1", String(nonce));
+  }, [nonce]);
+  useEffect(() => {
+    localStorage.setItem("tx_balance_v1", String(balance));
+  }, [balance]);
   useEffect(() => {
     localStorage.setItem("tx_history_v1", JSON.stringify(history));
   }, [history]);
 
-  const houseEdge = 0.025;
-  const quickBets = [10, 50, 100, 250, 500];
+  // const houseEdge = 0.02; // 2%
+  const payoutMultiplier = 0.98;
 
-  // roll function: uses deriveDiceFromSeeds (provably-fair)
-  const roll = async () => {
-    if (rolling) return;
-    if (betAmount <= 0 || betAmount > balance) {
-      alert("Số tiền cược không hợp lệ hoặc vượt quá số dư.");
-      return;
-    }
+  const sumDisplay = lastDice?.length ? lastDice.reduce((a, b) => a + b, 0) : 0;
+
+  const lastResult = sumDisplay >= 11 ? "tai" : "xiu";
+
+  // drag refs & threshold
+  const bowlRef = useRef<HTMLDivElement | null>(null);
+  const DRAG_THRESHOLD = 160; // px to reveal
+
+  // ---- actions ----
+  const startRoll = async () => {
+    if (!choice) return alert("Chọn TÀI hoặc XỈU trước khi lắc.");
+    if (betAmount <= 0) return alert("Nhập số tiền cược hợp lệ (>0).");
+    if (betAmount > balance) return alert("Số dư không đủ — nạp thêm hoặc giảm cược.");
+
+    // Begin roll: bowl covers, waiting state
     setRolling(true);
-    playShakeSound();
+    setBowlOpen(false);
+    setWaitingToOpen(false);
 
     const curNonce = nonce + 1;
     setNonce(curNonce);
 
-    // derive dice deterministically (logic unchanged)
+    // derive dice deterministically
     const { dice, hashBase } = await deriveDiceFromSeeds(serverSeed, clientSeed, curNonce);
 
-    // wait for animation to "finish" while showing rotating dice
-    await new Promise((r) => setTimeout(r, 1100));
+    // set dice now but keep bowl covering
     setLastDice(dice);
     setLastHashBase(hashBase);
 
-    const sum = dice.reduce((a, b) => a + b, 0);
-    const isTai = sum >= 11 && sum <= 17;
-    const isXiu = sum >= 4 && sum <= 10;
-
-    const win = (choice === "tai" && isTai) || (choice === "xiu" && isXiu);
-    const delta = win ? Math.round(betAmount * (1 - houseEdge)) : -betAmount;
-    const newBalance = balance + delta;
-    setBalance(newBalance);
-
-    const result = {
-      time: new Date().toISOString(),
-      dice,
-      sum,
-      choice,
-      bet: betAmount,
-      win,
-      delta,
-      serverSeed,
-      serverSeedHash,
-      clientSeed,
-      nonce: curNonce,
-      hashBase,
-    };
-    setHistory((h) => [result, ...h].slice(0, 30));
-    setLastResult(result);
-
-    // occasionally rotate server seed to keep it fresh
-    setServerSeed(Math.random().toString(36).slice(2));
-    setRolling(false);
+    // simulate bowl drop + shaking
+    setTimeout(() => {
+      setWaitingToOpen(true); // now player can drag to open
+      setRolling(false);
+    }, 1200);
   };
 
-  const resetBalance = () => setBalance(1000);
+  const openBowl = () => {
+    if (!waitingToOpen) return;
+    // for non-drag fallback: open when user clicks button
+    setBowlOpen(true);
+    setWaitingToOpen(false);
 
-  const sumDisplay = useMemo(() => lastDice.reduce((a, b) => a + b, 0), [lastDice]);
+    // compute result & apply balance changes
+    const sum = lastDice.reduce((a, b) => a + b, 0);
+    const res: "tai" | "xiu" = sum >= 11 && sum <= 17 ? "tai" : "xiu";
+    const win = choice === res;
 
-  const lastWin = !!lastResult?.win;
+    const delta = win ? Math.round(betAmount * payoutMultiplier) : -betAmount;
+    setBalance((prev) => prev + delta);
 
-  /* small inline style for casino glow */
-  const InlineStyles = (
-    <style>{`
-      .neon { text-shadow: 0 0 8px rgba(250,204,21,0.85), 0 6px 28px rgba(245,158,11,0.06); }
-      .btn-casino { background: linear-gradient(90deg,#f59e0b 0%, #facc15 45%, #f97316 100%); color: black; }
-      .soft-card { box-shadow: 0 12px 40px rgba(0,0,0,0.6), 0 0 40px rgba(245,158,11,0.03); }
-      .dice-3d { transform-style: preserve-3d; }
-      .pulse-win { animation: pulse 1.05s ease-in-out; }
-      @keyframes pulse { 0% { transform: scale(1); } 50% { transform: scale(1.04); } 100% { transform: scale(1); } }
-    `}</style>
-  );
+    setHistory((h) => [
+      { dice: lastDice, sum, result: res, win, bet: betAmount, time: new Date().toISOString() },
+      ...h.slice(0, 19),
+    ]);
+
+    // rotate server seed after revealing to preserve fairness
+    setServerSeed(Math.random().toString(36).slice(2));
+  };
+
+  // settings actions
+  const tryUnlockSettings = () => {
+    // Trim để tránh lỗi space
+    if (settingPw.trim() === "123456789") {
+      setSettingUnlocked(true);
+    } else {
+      alert("Mật khẩu sai.");
+    }
+  };
+
+  const doDeposit = () => {
+    if (depositValue <= 0) return alert("Nhập số tiền nạp lớn hơn 0.");
+    setBalance((b) => b + depositValue);
+    setDepositValue(0);
+    setSettingUnlocked(false);
+    setShowSettings(false);
+    setSettingPw("");
+  };
+
+  const doReset = () => {
+    if (!confirm("Xác nhận reset: số dư về 0 và xóa lịch sử?")) return;
+    setBalance(0);
+    setHistory([]);
+    setSettingUnlocked(false);
+    setShowSettings(false);
+    setSettingPw("");
+    // rotate serverSeed & reset nonce
+    setServerSeed(Math.random().toString(36).slice(2));
+    setNonce(0);
+  };
+
+  const quickBets = [10, 50, 100, 500, 1000];
+
+  // handle drag end from framer motion
+  const handleDragEnd = (_: any, info: { offset: { x: number; y: number } }) => {
+    if (!waitingToOpen) return;
+    const moved = info.offset.x;
+    // if dragged sufficiently right -> open
+    if (moved > DRAG_THRESHOLD) {
+      // animate open
+      setBowlOpen(true);
+      setWaitingToOpen(false);
+
+      // compute result & apply balance changes
+      const sum = lastDice.reduce((a, b) => a + b, 0);
+      const res: "tai" | "xiu" = sum >= 11 && sum <= 17 ? "tai" : "xiu";
+      const win = choice === res;
+      const delta = win ? Math.round(betAmount * payoutMultiplier) : -betAmount;
+      setBalance((prev) => prev + delta);
+      setHistory((h) => [
+        { dice: lastDice, sum, result: res, win, bet: betAmount, time: new Date().toISOString() },
+        ...h.slice(0, 19),
+      ]);
+      setServerSeed(Math.random().toString(36).slice(2));
+    } else {
+      // snap back: do nothing (bowl stays covering)
+    }
+  };
+
+  // small UI helpers
+  const isLandscape = true; // we assume wide layout
 
   return (
-    <div className="min-h-screen bg-gradient-to-b from-[#05060a] via-[#081021] to-[#020409] text-white flex items-center justify-center p-6 relative">
-      {InlineStyles}
-      <div className="w-full max-w-6xl rounded-3xl bg-[rgba(255,255,255,0.02)] border border-[rgba(255,255,255,0.04)] soft-card p-6 grid grid-cols-1 md:grid-cols-3 gap-6">
-        {/* Left / main */}
-        <div className="md:col-span-2 flex flex-col gap-5">
-          <div className="flex items-center justify-between">
-            <div>
-              <h1 className="text-3xl font-extrabold neon">TÀI — XỈU <span className="text-sm font-normal ml-3 text-slate-300">Casino Edition</span></h1>
-              <p className="text-sm text-slate-400 mt-1">Provably-fair • 3 xúc xắc • Giao diện casino</p>
-            </div>
-            <div className="text-right">
-              <div className="text-xs text-slate-400">SỐ DƯ</div>
-              <div className="text-2xl font-bold neon">{balance.toLocaleString()} ₫</div>
-            </div>
-          </div>
+    <>
+      {/* Background layer (fixed) */}
+      <div className="fixed inset-0 z-0 pointer-events-none">
+        <div className="w-full h-full bg-gradient-to-r from-[#021218] via-[#05202a] to-[#02121a] opacity-95" />
+      </div>
 
-          {/* Dice + controls */}
-          <div className="bg-[linear-gradient(180deg,#071018,rgba(255,255,255,0.01))] border border-[rgba(255,255,255,0.04)] rounded-2xl p-5 flex flex-col md:flex-row items-center gap-5">
-            <div className="flex items-center gap-4">
-              <div style={{ perspective: 900 }} className="p-4 rounded-3xl bg-[rgba(255,255,255,0.01)]">
-                <motion.div
-                  className="flex gap-3 items-center dice-3d"
-                  animate={rolling ? { rotateX: [0, 360], rotateY: [0, 360] } : { rotateX: 0, rotateY: 0 }}
-                  transition={{ duration: rolling ? 1.1 : 0.6, ease: "easeInOut" }}
-                >
-                  {lastDice.map((d, i) => (
-                    <motion.div
-                      key={i}
-                      initial={{ y: -6, rotate: 0 }}
-                      animate={rolling ? { y: [-6, 6, -6], rotate: [0, 360] } : { y: 0, rotate: 0 }}
-                      transition={{ duration: 1.1, repeat: 0, ease: "easeInOut", delay: i * 0.03 }}
-                      className={`${lastWin ? "pulse-win" : ""}`}
-                    >
-                      <DiceSVG value={d} size={84} />
-                    </motion.div>
-                  ))}
-                </motion.div>
-              </div>
+      {/* Main UI (on top) */}
+      <div className="w-full max-w-full md:max-w-7xl p-4 md:p-6">
 
+      <div className="w-full max-w-full min-h-[78vh] bg-[rgba(255,255,255,0.02)] border border-[rgba(255,255,255,0.04)] rounded-3xl p-4
+  grid grid-cols-1 md:grid-cols-12 gap-4
+  overflow-hidden h-auto md:h-[78vh]">
+
+
+          {/* Left: main table (8 cols) */}
+          {/* Left: main table */}
+<div className="col-span-1 md:col-span-8 flex flex-col gap-4">
+
+            {/* top bar: balance + seeds */}
+            <div className="flex items-center justify-between">
               <div>
-                <div className="text-xs text-slate-400">TỔNG</div>
-                <div className="text-4xl font-bold neon">{sumDisplay}</div>
-                <div className="text-sm mt-1 text-slate-300">
-                  Kết quả:{" "}
-                  <span className={`font-semibold ${sumDisplay >= 11 && sumDisplay <= 17 ? "text-emerald-400" : "text-rose-400"}`}>
-                    {sumDisplay >= 11 && sumDisplay <= 17 ? "TÀI" : "XỈU"}
-                  </span>
-                </div>
+                <div className="text-xs text-slate-300">SỐ DƯ</div>
+                <div className="text-2xl font-bold text-amber-300">{fmt(balance)} ₫</div>
+              </div>
+
+              <div className="text-right text-xs text-slate-400 max-w-[360px]">
+                {/* <div>ServerSeedHash:</div>
+                <div className="font-mono text-[11px] break-words">{serverSeedHash || "..."}</div> */}
               </div>
             </div>
 
-            <div className="flex-1">
-              <div className="flex gap-3 items-center mb-3">
-                <button
-                  onClick={() => setChoice("tai")}
-                  className={`px-4 py-2 rounded-full font-semibold transition-all ${choice === "tai" ? "btn-casino shadow-lg" : "border border-[rgba(255,255,255,0.04)] text-slate-200"}`}
-                >
-                  TÀI (11–17)
-                </button>
-                <button
-                  onClick={() => setChoice("xiu")}
-                  className={`px-4 py-2 rounded-full font-semibold transition-all ${choice === "xiu" ? "btn-casino shadow-lg" : "border border-[rgba(255,255,255,0.04)] text-slate-200"}`}
-                >
-                  XỈU (4–10)
-                </button>
+            {/* table area */}
+            <div className="flex-1 bg-[linear-gradient(180deg,#06202b,rgba(255,255,255,0.01))] rounded-2xl p-6 flex items-center justify-center relative">
+              {/* left area: labels Tài / Xỉu (visual) */}
+              {/* <div className="absolute left-6 top-8 text-sm text-slate-300 select-none">TÀI (11–17)</div>
+              <div className="absolute right-6 top-8 text-sm text-slate-300 select-none">XỈU (4–10)</div> */}
 
-                <div className="ml-auto text-xs text-slate-400">tỷ lệ phần trăm: {(houseEdge * 100).toFixed(2)}%</div>
+              {/* dice cluster container */}
+              <div className="w-full flex items-center justify-center">
+                <div className="relative w-full max-w-full sm:max-w-[640px] h-[220px] sm:h-[320px] flex items-center justify-center">
+
+                  {/* total display (visible when opened) */}
+                  <div className="absolute -top-8 left-1/2 -translate-x-1/2 z-20 min-h-[42px]">
+                    {bowlOpen && (
+                      <div className={`px-4 py-2 rounded-full text-xl font-bold ${lastResult === "tai" ? "text-emerald-300" : "text-rose-300"}`}>
+                        {`${lastResult?.toUpperCase() || ""} – ${sumDisplay}`}
+                      </div>
+                    )}
+                  </div>
+
+                  {/* dice row under bowl */}
+                  <motion.div
+                    className="flex gap-6 z-10"
+                    animate={rolling ? { rotate: [0, 360] } : { rotate: 0 }}
+                    transition={{ duration: rolling ? 0.9 : 0.6, repeat: rolling ? Infinity : 0 }}
+                  >
+                    {lastDice.map((d, i) => (
+                      <div key={i} className="flex items-center justify-center">
+                        <DiceSVG value={d} />
+                        
+                      </div>
+                    ))}
+                  </motion.div>
+                  </div>
+
+                 {/* bowl overlay: big to cover dice; draggable when waitingToOpen */}
+<div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+  <AnimatePresence>
+    {!bowlOpen && (
+      <motion.div
+        key="bowl"
+        ref={bowlRef}
+        drag={waitingToOpen ? "x" : false}
+        dragConstraints={{ left: 0, right: 800 }}
+        dragElastic={0.2}
+        onDragEnd={handleDragEnd}
+        initial={{ x: 0, y: -8, scale: 1 }}
+        animate={waitingToOpen ? { x: 0 } : { x: 0 }}
+        exit={{ x: "140%" }}
+        transition={{ duration: 0.45, ease: "easeInOut" }}
+        className="pointer-events-auto z-30 w-[150%] h-[260px] rounded-full flex items-center justify-center"
+      >
+        {/*  Ảnh bát che xúc xắc */}
+        <div
+          key={Date.now()}
+          className="absolute inset-0 pointer-events-auto z-30 rounded-full flex items-center justify-center"
+          style={{
+            backgroundImage: "url('/bat.jpg?v=" + Date.now() + "')",
+            backgroundSize: "cover",
+            backgroundPosition: "center",
+            border: "3px solid rgba(255,255,255,0.08)",
+            boxShadow: "inset 0 -40px 80px rgba(0,0,0,0.6)",
+            transform: "rotateX(45deg)",
+transformOrigin: "center",
+
+          }}
+        >
+          <div className="text-slate-300 text-sm select-none bg-black/40 px-3 py-1 rounded">
+            {rolling ? "Đang lắc..." : waitingToOpen ? "Kéo để mở bát →" : "Úp bát"}
+          </div>
+        </div>
+      </motion.div>
+    )}
+  </AnimatePresence>
+</div>
+
+
+                {/* bet input */}
+                <div className="flex items-center gap-2 ml-4">
+                  <input
+                    type="number"
+                    min={1}
+                    value={betAmount}
+                    onChange={(e) => setBetAmount(Number(e.target.value))}
+                    className="w-28 px-3 py-2 rounded-lg bg-[rgba(255,255,255,0.02)] border border-[rgba(255,255,255,0.04)]"
+                  />
+                  <div className="flex gap-2">
+                    {quickBets.map((b) => (
+                      <button key={b} onClick={() => setBetAmount(b)} className="px-3 py-2 rounded-lg bg-[rgba(255,255,255,0.01)] border">
+                        {b}
+                      </button>
+                    ))}
+                  </div>
+                </div>
               </div>
 
               <div className="flex items-center gap-3">
-                <input
-                  value={betAmount}
-                  onChange={(e) => setBetAmount(Number(e.target.value))}
-                  type="number"
-                  min={1}
-                  className="w-36 px-3 py-2 rounded-xl bg-[rgba(255,255,255,0.02)] border border-[rgba(255,255,255,0.04)]"
-                />
-
-                <div className="flex gap-2">
-                  {quickBets.map((b) => (
-                    <button key={b} onClick={() => setBetAmount(b)} className="px-3 py-2 rounded-lg bg-[rgba(255,255,255,0.01)] border border-[rgba(255,255,255,0.04)] text-sm">
-                      {b}
-                    </button>
-                  ))}
-                </div>
+                {/* Roll / Open buttons */}
+                <button
+                  onClick={startRoll}
+                  disabled={rolling || waitingToOpen}
+                  className="px-5 py-3 rounded-2xl font-bold bg-amber-400 text-black shadow disabled:opacity-60"
+                >
+                  {rolling ? "Đang lắc..." : "Lắc xúc xắc"}
+                </button>
 
                 <button
-                  onClick={() => {
-                    if (betAmount <= balance) roll();
-                    else alert("Tiền cược vượt quá số dư.");
-                  }}
-                  disabled={rolling}
-                  className="ml-auto px-6 py-3 rounded-2xl font-bold btn-casino text-black shadow-lg disabled:opacity-60 disabled:cursor-not-allowed"
+                  onClick={openBowl}
+                  disabled={!waitingToOpen}
+                  className="px-5 py-3 rounded-2xl font-bold bg-emerald-500 text-black shadow disabled:opacity-50"
                 >
-                  {rolling ? "Đang quay..." : "Đặt cược & Quay"}
+                  Mở bát
                 </button>
               </div>
-
-              <div className="mt-3 text-xs text-slate-400">Mẹo: Chọn cửa → chỉnh cược → bấm Quay. Server seed được hash để minh bạch.</div>
             </div>
           </div>
 
-          {/* Provably fair + history */}
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            <div className="col-span-1 bg-[rgba(255,255,255,0.02)] border border-[rgba(255,255,255,0.04)] rounded-2xl p-4">
-              <div className="text-sm text-slate-400">Provably Fair</div>
-              <div className="mt-2 font-mono text-xs break-all text-slate-200">{serverSeedHash || "..."}</div>
-              <div className="mt-3">
-                <div className="text-xs text-slate-400">Client seed</div>
-                <input value={clientSeed} onChange={(e) => setClientSeed(e.target.value)} className="mt-1 w-full px-2 py-2 rounded-md bg-[rgba(255,255,255,0.02)] border border-[rgba(255,255,255,0.03)] font-mono text-xs" />
-              </div>
-            </div>
+          {/* Right column: settings + history (4 cols) */}
+          {/* Right column: settings + history */}
+<div className="col-span-1 md:col-span-4 flex flex-col gap-4">
 
-            <div className="col-span-2 bg-[rgba(255,255,255,0.02)] border border-[rgba(255,255,255,0.04)] rounded-2xl p-4">
+            <div className="rounded-2xl p-4 bg-[rgba(255,255,255,0.02)] border flex flex-col gap-3">
               <div className="flex items-center justify-between">
+                <div>
+                  <div className="text-xs text-slate-400">Nhà cái đến từ Châu Á</div>
+                  <div className="font-mono text-sm text-slate-200 break-words">{clientSeed}</div>
+                </div>
+                <div>
+                  <button
+                    onClick={() => {
+                      // LOG ĐỂ DEBUG (bạn có thể xóa khi đã ok)
+                      console.log("Open Setting clicked");
+                      setShowSettings(true);
+                      setSettingPw("");
+                      setSettingUnlocked(false);
+                    }}
+                    className="px-3 py-2 rounded-lg border bg-[rgba(255,255,255,0.01)]"
+                  >
+                    ⚙️ Setting
+                  </button>
+                </div>
+              </div>
+
+              {/* <div className="text-xs text-slate-400">Last hash</div> */}
+              {/* <div className="font-mono text-xs break-words text-slate-300">{lastHashBase || "–"}</div> */}
+            </div>
+
+            <div className="rounded-2xl p-4 flex-1 flex flex-col history-thin-bg">
+
+
+              <div className="flex items-center justify-between mb-2">
                 <div className="font-semibold">Lịch sử ({history.length})</div>
-                <div className="text-sm text-slate-400">Mới nhất ở trên</div>
-              </div>
+                <button
+                  onClick={() => {
+                    if (confirm("Xóa lịch sử?")) setHistory([]);
+                  }}
+                  className="text-xs px-2 py-1 rounded border bg-[rgba(255,255,255,0.01)]"
+                >
+                  Xóa
+              </button>
+</div>
 
-              <div className="mt-3 max-h-56 overflow-auto space-y-2">
-                {history.length === 0 && <div className="text-slate-500 text-sm">Chưa có ván nào.</div>}
-                {history.map((h, idx) => (
-                  <div key={idx} className="p-3 rounded-lg border border-[rgba(255,255,255,0.03)] flex items-center justify-between bg-[rgba(0,0,0,0.15)]">
-                    <div>
-                      <div className="font-mono text-xs text-slate-300">{new Date(h.time).toLocaleString()}</div>
-                      <div className="text-sm text-slate-100">{h.dice.join(" · ")} → Tổng {h.sum} → {h.win ? "Thắng" : "Thua"}</div>
-                      <div className="text-xs text-slate-400">Cược {h.bet} → {h.delta > 0 ? `+${h.delta}` : h.delta}</div>
-                    </div>
-                    <div className="text-right">
-                      <div className={`px-3 py-1 rounded-full text-sm ${h.win ? "bg-emerald-900 text-emerald-300" : "bg-rose-900 text-rose-300"}`}>{h.win ? "WIN" : "LOSE"}</div>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          </div>
+<div className="flex-1 overflow-auto max-h-[38vh] space-y-2 text-sm">
+  {history.length === 0 && (
+    <div className="text-slate-400">Chưa có ván nào.</div>
+  )}
+  {history.map((h, idx) => (
+    <div
+      key={idx}
+      className="flex items-center justify-between bg-[rgba(255,255,255,0.01)] p-2 rounded"
+    >
+      <div>
+        <div className="font-mono text-xs text-slate-300">
+          {new Date(h.time).toLocaleString()}
         </div>
+        <div className="text-sm text-slate-100">
+          {h.dice.join(" · ")} → {h.result?.toUpperCase() || ""}
+        </div> {/* ✅ thêm dấu đóng div này */}
+      </div>
+      <div
+        className={`text-sm font-semibold ${
+          h.win ? "text-emerald-300" : "text-rose-400"
+        }`}
+      >
+        {h.win
+          ? `+${fmt(Math.round(h.bet * payoutMultiplier))}`
+          : `-${fmt(h.bet)}`}
+      </div>
+    </div>
+  ))} {/* ✅ đóng ngoặc map */}
+</div>
+</div>
 
-        {/* Right column */}
-        <div className="flex flex-col gap-4">
-          <div className="rounded-2xl p-4 bg-[linear-gradient(180deg,#071018,rgba(255,255,255,0.01))] border border-[rgba(255,255,255,0.04)]">
-            <div className="text-sm text-slate-400">Cài đặt nhanh</div>
-            <div className="mt-3 flex flex-col gap-2">
-              <button onClick={() => setBalance(balance + 500)} className="px-3 py-2 rounded-lg border border-[rgba(255,255,255,0.04)]">Nạp thử +500</button>
-              <button onClick={resetBalance} className="px-3 py-2 rounded-lg border border-[rgba(255,255,255,0.04)]">Reset số dư</button>
-              <button onClick={() => { setHistory([]); localStorage.removeItem("tx_history_v1"); }} className="px-3 py-2 rounded-lg border border-[rgba(255,255,255,0.04)]">Xóa lịch sử</button>
-            </div>
-          </div>
 
-          <div className="rounded-2xl p-4 bg-[rgba(255,255,255,0.02)] border border-[rgba(255,255,255,0.04)]">
-            <div className="text-sm text-slate-400">Xác suất</div>
-            <div className="mt-2 text-sm text-slate-200">
-              <ul className="list-disc list-inside">
-                <li>Tài: tổng 11–17 — trả ~even-money minus house edge</li>
-                <li>Xỉu: tổng 4–10 — tương tự</li>
-                <li>House edge: {(houseEdge * 100).toFixed(2)}%</li>
+            <div className="rounded-2xl p-4 bg-[rgba(255,255,255,0.02)] border text-xs text-slate-400">
+              <div>Chú ý:</div>
+              <ul className="list-disc pl-4 mt-2">
+                <li>Win trả: cược × {payoutMultiplier.toFixed(2)} (nhà cái giữ 2%).</li>
+                <li>Xỉu(4-10) Tài(11-17).</li>
               </ul>
             </div>
-          </div>
-
-          <div className="rounded-2xl p-3 bg-[rgba(255,255,255,0.01)] border border-[rgba(255,255,255,0.03)] font-mono text-xs text-slate-400">
-            Developer notes<br />
-            Single-file demo. For production: server-side seed rotation, secure accounting, and anti-cheat required.
           </div>
         </div>
       </div>
 
-      {/* Confetti when win */}
-      <AnimatePresence>
-        {lastWin && (
-          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="pointer-events-none fixed inset-0 z-40">
-            <div className="absolute inset-0 overflow-hidden">
-              {Array.from({ length: 22 }).map((_, i) => (
-                <motion.span
-                  key={i}
-                  initial={{ y: -20, x: `${Math.random() * 100}%`, opacity: 1 }}
-                  animate={{ y: "110vh", rotate: Math.random() * 720 }}
-                  transition={{ duration: 1.5 + Math.random() * 0.6, delay: (i % 6) * 0.04 }}
-                  style={{
-                    position: "absolute",
-                    left: `${(i / 22) * 100}%`,
-                    top: 0,
-                    fontSize: 16 + Math.random() * 8,
-                    color: ["#FDE68A", "#F59E0B", "#F97316", "#F43F5E"][i % 4],
-                  }}
-                >
-                  ●
-                </motion.span>
-              ))}
-            </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
-
-      {/* footer */}
-      <div className="absolute bottom-4 left-1/2 -translate-x-1/2 text-xs text-slate-500">Thiết kế: Ang Thang • Provably-fair demo</div>
-    </div>
-  );
-}
+      {/* SETTINGS MODAL */}
+      <SettingsModal
+        show={showSettings}
+        settingPw={settingPw}
+        setSettingPw={setSettingPw}
+        tryUnlockSettings={tryUnlockSettings}
+        settingUnlocked={settingUnlocked}
+        setSettingUnlocked={setSettingUnlocked}
+        setShowSettings={setShowSettings}
+        depositValue={depositValue}
+        setDepositValue={setDepositValue}
+        doDeposit={doDeposit}
+        doReset={doReset}
+  />
+  </>
+);}
